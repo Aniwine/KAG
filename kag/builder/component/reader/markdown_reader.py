@@ -210,6 +210,7 @@ class MarkDownReader(SourceReaderABC):
             return []
         output = []
         prefix_tags = []
+        #所有在ALL_LEVELS中的标签都需要解析，而遇到他们之前的部分需要添加到上一次的结果中
         while len(level_tags) > 0:
             tag = level_tags[0]
             if tag.name in self.ALL_LEVELS:
@@ -222,10 +223,13 @@ class MarkDownReader(SourceReaderABC):
         cur = []
         while len(level_tags) > 0:
             tag = level_tags[0]
+            #这里同样是存储非层级标签，进while循环后第一次一定是进else，然后如果有非层级标签再进if，比如我们处理的层级是h2
+            #最后返回的结果应该是h1的所有下级，所以此处用的parent_header，这个函数的作用就是（单次递归时）处理所有level级别的标签
+            #处理逻辑是将parent_header下的所有level（比如h2）都处理，而非处理单个
             if tag.name not in self.ALL_LEVELS:
                 cur.append((parent_header, level_tags.pop(0)))
             else:
-
+                #因此这里大于时，递归深入
                 if tag.name > level:
                     cur += self.parse_level_tags(
                         level_tags,
@@ -235,15 +239,18 @@ class MarkDownReader(SourceReaderABC):
                         else cur_header,
                         tag.name,
                     )
+                #因此这里等于时只重置，不返回
                 elif tag.name == level:
                     if len(cur) > 0:
                         output.append(cur)
                     cur = [(parent_header, level_tags.pop(0))]
                     cur_header = tag.text
+                #因此这里小于时说明处理完了，直接返回
                 else:
                     if len(cur) > 0:
                         output.append(cur)
                     return output
+        #如果处理完所有而level_tags后没有遇到更小等级的，则最后返回
         if len(cur) > 0:
             output.append(cur)
         return output
@@ -260,6 +267,8 @@ class MarkDownReader(SourceReaderABC):
         Returns:
             list: A list of cut chunks.
         """
+        #这个函数并没有进行任何的关于具体的html层级比较，这里的level指的是在原来解析的层级基础上，向下切分多少到层级，比如之前是h1的cur_level=0
+        #现在final_level为1,那么就是向下切一层，结果就是所有的h2的内容为一个块
         output = []
         if cur_level == final_level:
             cur_prefix = []
@@ -276,6 +285,7 @@ class MarkDownReader(SourceReaderABC):
                 output.append(cur_prefix)
             for sublevel_tags in level_tags:
                 if isinstance(sublevel_tags, list):
+                    #这里就是为什么结果中每一段都加上了h1下的非层级标签内容，但是这样做的意义是？
                     output.append(cur_prefix + "\n" + self.to_text(sublevel_tags))
             return output
         else:
@@ -290,9 +300,11 @@ class MarkDownReader(SourceReaderABC):
             cur_prefix = "\n".join(cur_prefix)
             if len(cur_prefix) > 0:
                 output.append(cur_prefix)
-
+            #这里的处理为先把元组的处理为，他们是一个字符串，后续的一个列表的所有内容为一个字符串，因为根据上一步的解析结果，每一层一个level块用一个list
+            #存储其下所有的标签内容，而超过level等级（超过这里比如h1就是超过h2的）一个标签为一个tuple
             for sublevel_tags in level_tags:
                 if isinstance(sublevel_tags, list):
+                    #这里和上面唯一的差别就是这里用了递归
                     output += self.cut(sublevel_tags, cur_level + 1, final_level)
             return output
 
@@ -332,8 +344,8 @@ class MarkDownReader(SourceReaderABC):
             return [chunk]
         tags = [tag for tag in soup.children if isinstance(tag, Tag)]
 
-        level_tags = self.parse_level_tags(tags, top_level)
-        cutted = self.cut(level_tags, 0, self.cut_depth)
+        level_tags = self.parse_level_tags(tags, top_level)#加一个parent_header=test最后肯定都是带test的，因为这个函数就是得到父级下的所有为level的标签
+        cutted = self.cut(level_tags, 0, self.cut_depth)#每个结果都带有top level下的非层级标签内容
 
         chunks = []
 
@@ -368,7 +380,7 @@ class MarkDownReader(SourceReaderABC):
                 name=f"{title}#{idx}",
                 content=table_chunk_str,
             )
-        table_markdown_str = matches[0]
+        table_markdown_str = matches[0]#取0是因为正则表达式匹配时用了re.DOTALL，所以会获取所有表格
         html_table_str = markdown.markdown(table_markdown_str, extensions=["markdown.extensions.tables"])
         try:
             df = pd.read_html(html_table_str)[0]
